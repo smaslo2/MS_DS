@@ -1,0 +1,95 @@
+---
+title: "Covid and Population Data"
+author: "Unknown"
+date: "2022-11-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## Load Files
+Covid 19 data is downloaded from the John Hopkins github to obtain total covid cases.  Population data is downloaded from the UN to obtain population data, population density, and median age.  
+**This code will write ~8 MB to disk in your temp folder.**
+
+```{r load, echo=TRUE}
+url <- 'https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv'
+raw_Data <- read_csv(url) %>%
+  pivot_longer(cols = -c('Province/State','Country/Region',Lat,Long), names_to = "date",values_to = 'cases') %>%
+  select(-c(Lat,Long))
+```
+
+``` {r load2, echo=TRUE}
+url2 <- 'https://population.un.org/wpp/Download/Files/1_Indicators%20(Standard)/CSV_FILES/WPP2022_Demographic_Indicators_Medium.zip'
+temp <- tempfile()
+download.file(url2,temp)
+con <- unzip(temp)
+pop_raw_data <- read.table(con,sep=',',header=TRUE)
+unlink(temp)
+```
+
+## Clean Data
+The covid 19 data was cleaned by filtering for cases greater than zero, collated by country and date, and finally total cases as of 2021-07-01 were selected.  The population data was filtered for 2021 and was updated on 2021-07-1.  The two tables were inner joined, resulting in a final data set with 170 records.  This could be improved by looking through the country names and doing better string matching.
+```{r clean, echo=TRUE}
+cleaned_Data <- raw_Data %>%
+  filter(cases > 0) %>%
+  mutate(date = as.Date(date, format = "%m/%d/%y"))
+
+colnames(cleaned_Data) <- c('Province','Country','Date','Cases')
+  
+#sample <- cleaned_Data %>%
+#  unite('combined_key',c('Province/State','Country/Region'),remove=FALSE) %>%
+#  distinct(combined_key)
+
+grouped_Data <- cleaned_Data %>%
+  group_by(Country,Date) %>%
+  summarise(Cases = sum(Cases),.groups = 'keep') %>%
+  ungroup() %>%
+  filter(Date == '2021-07-01')
+
+pop_clean_data <- pop_raw_data %>%
+  filter(LocTypeName == 'Country/Area') %>%
+  filter(Time == 2021) %>%
+  select(c(Location,TPopulation1July,PopDensity,MedianAgePop))
+
+final_data <- merge(pop_clean_data,grouped_Data,by.x='Location',by.y='Country',all.x=FALSE,all.y=FALSE)
+final_data$CasesPerCapita <- final_data$Cases / final_data$TPopulation1July
+
+summary(final_data)
+```
+
+## Explore
+Covid cases per thousand were plotted against total population, population density, and median age.  Higher populations did not have increased covid cases.  Older populations had an increase in covid cases.  Denser populations may have had more cases with a weak relationship.
+``` {r EDA, echo=TRUE}
+final_data %>%
+  ggplot(aes(x=TPopulation1July, y=Cases)) +
+  geom_point() +
+  labs(title = 'Cases vs Total Population',x='Total Population (thousands)',y='Cases per Thousand')
+
+final_data %>%
+  ggplot(aes(x=PopDensity, y=CasesPerCapita)) +
+  geom_point() +
+  coord_trans(x = "log10") +
+  labs(title = 'Cases vs Population Density',x='Population Density (Persons per Square km)',y='Cases per Thousand')
+
+final_data %>%
+  ggplot(aes(x=MedianAgePop, y=CasesPerCapita)) +
+  geom_point() +
+  labs(title = 'Cases vs Median Age',x='Median Age (years)',y='Cases Per Thousand')
+```
+
+## Model
+Covid cases per capita were modeled as a linear function of median age and the base 10 logarithm of population density.  The model R-squared is 0.386 which is weak. Population density is not statistically significant and should be struck from the model.
+``` {r model, echo=TRUE}
+model <- lm(CasesPerCapita ~ MedianAgePop + log10(PopDensity), data = final_data)
+summary(model)
+```
+
+## Bias
+The data may be highly biased by economic status.  Developed economies may have had more resources for testing, resulting in higher reported cases relative to less developed economies.  Developed economies also tend to be older.  In some cases more developed economies are relatively dense, but the relationship between population density and economy is complex.
+
+```{r end}
+sessionInfo()
+```
