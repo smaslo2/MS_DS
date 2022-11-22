@@ -1,0 +1,120 @@
+---
+title: "NYPD Shooting Incidents"
+author: "Unknown"
+date: "2022-11-06"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(hms)
+```
+
+## Load Files
+Historical shooting incident data from New York City is downloaded from data.gov.
+
+```{r load, echo=TRUE}
+url <- 'https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD'
+raw_shootingData <- read_csv(url)
+```
+
+## Clean Data
+Data cleaned by:  
+* dropping latitude and longitude  
+* converting dates from string to date  
+* converting most variables to factors  
+
+Columns with missing data:  
+* PERP/VIC AGE, SEX, RACE: treat NA as factor  
+* JURISDICTION_CODE: 2 rows, can probably just be dropped  
+* OCCUR_DATE: might be able to infer using incident key  
+* LOCATION_DESC: might be inferrable from lat, long or just ignore missing  
+
+```{r clean, echo=TRUE}
+cleaned_shootingData <- raw_shootingData[!names(raw_shootingData) %in% c('Latitude','Longitude','Lon_Lat')]
+cleaned_shootingData$Month <- substr(cleaned_shootingData$OCCUR_DATE,1,2)
+
+cleaned_shootingData <- cleaned_shootingData %>%
+  mutate(OCCUR_DATE = as.Date(OCCUR_DATE, format = "%m/%d/%Y")) %>%
+  mutate(OCCUR_TIME = as_hms(OCCUR_TIME)) %>%
+  mutate(BORO = as.factor(BORO)) %>%
+  mutate(JURISDICTION_CODE = as.factor(JURISDICTION_CODE)) %>%
+  mutate(PERP_AGE_GROUP = as.factor(PERP_AGE_GROUP)) %>%
+  mutate(PERP_SEX = as.factor(PERP_SEX)) %>%
+  mutate(PERP_RACE = as.factor(PERP_RACE)) %>%
+  mutate(VIC_AGE_GROUP = as.factor(VIC_AGE_GROUP)) %>%
+  mutate(VIC_SEX = as.factor(VIC_SEX)) %>%
+  mutate(VIC_RACE = as.factor(VIC_RACE)) %>%
+  mutate(LOCATION_DESC = as.factor(LOCATION_DESC)) %>%
+  mutate(Month = as.factor(Month))
+
+summary(cleaned_shootingData)
+```
+
+## Visualize
+### Murders by Borough
+Statistical murders were grouped by borough.  Brooklyn had the most murders while Staten Island had the least.  The data was not normalized by population so this view is misleading.
+```{r murders_by_boro, echo=TRUE}
+# test <- cleaned_shootingData %>%
+#   group_by(BORO) %>%
+#   summarize(murders = sum(STATISTICAL_MURDER_FLAG)) %>%
+#   ungroup()
+
+cleaned_shootingData %>%
+  filter(STATISTICAL_MURDER_FLAG == TRUE) %>%
+  ggplot(aes(x=BORO)) +
+  geom_bar(mapping = aes(x=BORO)) +
+  labs(title = 'Murders by Borough', x='Borough', y='Murders')
+```
+
+### Incidents by Date
+Shooting incidents were grouped and plotted by date.  The data has an interesting cycle pattern that appears to occur annually with a possible peak in summer.  Future work could investigate the cause of the spike in 2020.  The incidents show a gradual decline from 2006 to 2019, followed by an increase in 2020.
+```{r incidents_by_date, echo=TRUE}
+cleaned_shootingData %>%
+  group_by(OCCUR_DATE) %>%
+  summarize(total = n()) %>%
+  ungroup() %>%
+  ggplot(aes(x=OCCUR_DATE, y=total)) + 
+  geom_line() +
+  ylim(0,50) +
+  labs(title = 'New York City Shooting Incidents',x='Date',y='Incidents')
+```
+
+### Incidents by Month
+Shooting incidents increase in the summer months and are lowest in February.  Fewer incidents in February than December might imply a stronger correlation with temperature than daylight hours, but further investigation is needed to rule out other variables such as holidays.
+```{r incidents_by_month, echo = TRUE}
+cleaned_shootingData %>%
+  group_by(Month) %>%
+  summarize(total = n()) %>%
+  ungroup() %>%
+  ggplot(aes(x=Month, y=total)) +
+  geom_point() +
+  geom_line(group = 1) +
+  labs(title = 'New York City Shooting Incidents',x='Month',y='Incidents')
+```
+
+### Incidents by Time
+Shooting incidents begin to rise around 11:00 or noon and peak around midnight.  The spiking pattern might be noise, or could be due to incident time being rounded (reporting a 1:31 call as 1:30).  Future work could look at the highest frequency reports and see if they are round numbers.  Future work could also investigate whether time of day has a seasonal or daylight dependence.
+```{r incidents_by_time, echo=TRUE}
+cleaned_shootingData %>%
+  group_by(OCCUR_TIME) %>%
+  summarize(total = n()) %>%
+  ungroup() %>%
+  ggplot(aes(x=OCCUR_TIME, y=total)) + 
+  geom_line() +
+  ylim(0,200) +
+  labs(title = 'New York City Shooting Incidents',x='Time of Day',y='Incidents')
+```
+
+## Bias
+The dataset could be biased by which incidents are reported.  Do boroughs or precincts report incidents at different rates?  Are incidents at a time of day or season of the year reported at different rates?  Are incidents with victims of a certain age, race, or sex reported at different rates?
+
+The large number of NA in the sex, race, and age fields will likely introduce bias into the results.  Why these fields were not reported is important to interpret the results.
+
+The analyzers background could influence how they choose to fill missing values and which biases they are able to identify.
+```{r end}
+sessionInfo()
+```
